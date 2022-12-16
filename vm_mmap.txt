@@ -1,0 +1,107 @@
+          +----------------------------------+
+          | CS 301                           |
+          | PROJECT 4: VIRTUAL MEMORY - MMAP |
+          | DESIGN DOCUMENT                  |
+          +----------------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Haikoo Khandor <haikoo.ashok@iitgn.ac.in>
+Madhav Kanda <madhav.kanda@iitgn.ac.in>
+Mihir Sutariya <sutariya.mihirkumar@iitgn.ac.in>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+1. https://github.com/codyjack/OS-pintos
+2. https://github.com/wookayin/pintos
+
+          STACK GROWTH
+          =====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+---- ALGORITHMS ----
+
+>> A2: Explain your heuristic for deciding whether a page fault for an
+>> invalid virtual address should cause the stack to be extended into
+>> the page that faulted.
+
+If the spe entry is not found in the supplemental page table for the current thread,
+the virtual address can be a stack access.If the virtual address access expands the
+stack past its limit, the access is deemed invalid, and the user programme is terminated.
+
+
+
+          MEMORY MAPPED FILES
+          ===================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+1. For memory map pages,we introduced the following in thread.h :
+	struct list mmap_list;
+	int mapid;
+
+2. For memory map file parameters, we introduced the following in process.h:
+	struct mmap_file {
+    		struct list_elem elem;
+    		struct sp_entry *spe;
+    		int mapid;
+  	};
+
+
+---- ALGORITHMS ----
+
+>> B2: Describe how memory mapped files integrate into your virtual
+>> memory subsystem.  Explain how the page fault and eviction
+>> processes differ between swap pages and other pages.
+
+Virtual memory subsystem maintains a hash table of memory mapped files corresponding to each process.
+When a process starts, it will initialize the hash table. The mmap and munmap are called through
+system calls. To get a mapid, mmap will load the file into the memory. munmap will release memory
+and determine whether any associated dirty pages need to be written back to the file; otherwise,
+just release the pages. All the memory mapped files gets freed when a process exits.
+
+The mmap file behaves identically to the executable file during the page fault (since it is simply read).
+Similar to that, they are loaded into physical memory. The distinction is that they must respond in writing
+during the munmap and eviction processes.
+
+>> B3: Explain how you determine whether a new file mapping overlaps
+>> any existing segment.
+
+There is a page by page mapping of each file to its corresponding address.
+The corresponding spe is added to the hash table of each thread at each page. 
+The mapping of the file is page-by-page to the corresponding address. Thus, if a new file mapping overlaps with
+an existing segment then the hash table detects duplicate entries. Hence, for the new file all the mappings done
+previously are unmapped.
+
+
+---- RATIONALE ----
+
+>> B4: Mappings created with "mmap" have similar semantics to those of
+>> data demand-paged from executables, except that "mmap" mappings are
+>> written back to their original files, not to swap.  This implies
+>> that much of their implementation can be shared.  Explain why your
+>> implementation either does or does not share much of the code for
+>> the two situations.
+
+Our implementation shares some of the code between both, as load_file function is used by both functions
+for loading pages into the physical memory since both mmap_files and executable files are loaded in similar fashion. 
+During the frame eviction mmap dirty pages are written to the corresponding files and clean mmap pages are not written.
+Thus, in case of loading, our implementation of mmap_files act as an extension to executable files.
+

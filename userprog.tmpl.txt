@@ -1,0 +1,263 @@
+		     +--------------------------+
+       	       	     |		CS 301		|
+		     | PROJECT 2: USER PROGRAMS	|
+		     | 	   DESIGN DOCUMENT     	|
+		     +--------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Mihir Sutariya <sutariya.mihirkumar@iitgn.ac.in>
+Haikoo Khandor <haikoo.ashok@iitgn.ac.in>
+Madhav Kanda <madhav.kanda@iitgn.ac.in>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+1.https://github.com/st2092/pintos-user-programs
+2.https://github.com/ChristianJHughes/pintos-project2
+3.https://youtube.com/playlist?list=PLmQBKYly8OsWiRYGn1wvjwAdbuNWOBJNf
+
+			   ARGUMENT PASSING
+			   ================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+For this question there was no need for any extra structure other than the one defined in the skeleton pintos project.
+
+---- ALGORITHMS ----
+
+>> A2: Briefly describe how you implemented argument parsing.  How do
+>> you arrange for the elements of argv[] to be in the right order?
+>> How do you avoid overflowing the stack page?
+
+process_execute() --> thread_create() --> start_process() --> load()
+
+- The file name is passed as an argument where it needs to load, so that the error,"file does not exist error" does not take place.
+- The argument is tokenized by using the predefined funtion strtok_r(). 
+- There are may ways to copy args in user stack. The implementaion is done in the setup_stack() function 
+which will subsequently be called by the load() function.
+- Implementaion/Algorithm : First we added the executable file name to the stack and
+the args(arguments) are added to the stack in order from left to right. We align it by
+adding extra zeros. Then we add NULL(argv[argc]) to the stack. Then we add the 
+addresses of the executable file name and the args in the stack to the stack
+such that the address of the executable file name is on the bottom of the
+stack upto this point(considering stack grows downward). After this the address of
+argv is added to the stack. Finally argc and return address are added to the
+stack. 
+- We don't check the size of the stack after its setup, but if it overflows then
+we exit the process through page_fault() exception by exit(-1).
+
+---- RATIONALE ----
+
+>> A3: Why does Pintos implement strtok_r() but not strtok()?
+
+- The difference between strtok_r() and strtok() is that unlike strtok(), strtok_r() separates the command line
+and arguments and the address of the arguments is stored in next_ptr which we give to the 
+function.
+
+>> A4: In Pintos, the kernel separates commands into a executable name
+>> and arguments.  In Unix-like systems, the shell does this
+>> separation.  Identify at least two advantages of the Unix approach.
+
+- The performance will be better in second case because it reduces the kernel process time.
+- The shell can check if there is an executable file before sending it to the kernel.
+
+			     SYSTEM CALLS
+			     ============
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+struct thread
+  {
+    /* Owned by thread.c. */
+    tid_t tid;                          /* Thread identifier. */
+    enum thread_status status;          /* Thread state. */
+    char name[16];
+    uint8_t *stack;                     /* Saved stack pointer. */
+    int priority;                       /* Priority. */
+    struct list_elem allelem;           /* List element for all threads list. */
+
+    /* Shared between thread.c and synch.c. */
+    struct list_elem elem;              /* List element. */
+
+    struct list fd_list;                /* File discriptors */
+    int fd_length;                      /* Size of the fds*/
+    struct file *f_execute;             /* Exec file that thread is running */
+
+    struct semaphore sema_load;         /* Wait for child to load */
+    struct semaphore sema_wait;         /* Wait for child to exit */
+    struct list children_list;          /* Children list */
+    struct thread *parent;       /* Parent thread */
+
+#ifdef USERPROG
+    /* Owned by userprog/process.c. */
+    uint32_t *pagedir;                  /* Page directory. */
+#endif
+
+    /* Owned by thread.c. */
+    unsigned magic;                     /* Detects stack overflow. */
+  };
+
+struct child 
+  {
+    struct list_elem child_elem;        /* list_elem for adding in list */
+    struct thread *child_thread;        /* The thread representing the child */
+    int child_tid;                      /* tid of the child */
+    enum child_status exit_status;      /* Exit status of the child */
+    enum child_status cur_status;       /* Current status of the child */
+    bool is_first_wait;                 /* Checks if wait is called multiple times */
+    bool loaded;                        /* Checks if child is loaded */
+  };
+
+struct file_descriptor
+  {
+    struct list_elem fd_elem;
+    int fd;
+    struct file *fd_file;
+  };
+
+
+enum child_status
+  {
+    CHILD_KILLED,       /* Killed child */
+    CHILD_EXITED,       /* Exited child */
+    CHILD_ALIVE         /* Alive child */
+  };
+
+- fd_list : used as file descripter table
+- fd_length : size of the fd_list length
+- f_execute: points to executable file that kernel thread is running
+- sema_load : to implement wait until child process is loading
+- sema_wait : to implement wait sys_call functionality
+- children_list : keep track of children's status and its pid and other things
+- parent : points to parent of the current process
+- child struct: written in the comment
+- fd_elem : element to add in the list
+- fd_file : file that it is pointing to 
+- fd : index of the table
+- enums : just keep track of how child process exited or it is running.
+- global variable file_mutex: to avoid race condition between file manipulation sys_calls eg read, write
+
+>> B2: Describe how file descriptors are associated with open files.
+>> Are file descriptors unique within the entire OS or just within a
+>> single process?
+
+- Each process has its own file descriptor list to store the file_descriptor of open files.
+- File descriptors are unique just within a single process not within the entire OS.
+
+---- ALGORITHMS ----
+
+>> B3: Describe your code for reading and writing user data from the
+>> kernel.
+
+- While passing the arguments we have checked all required address are in user virtual address or not.
+- Read() : First we check if fd == 0 (STDIN), if it is then we use input_getc() to get input from console
+else we use search_fd() to get the struct file_descriptor from fd. Then we use file_read to
+read the file.
+- Write() : First we check if fd == 1 (STDOUT), if it is then we use putbuf() to output onto the console
+else we use search_fd() to get the struct file_descriptor from fd. Then we use file_write to
+write into the file.
+
+>> B4: Suppose a system call causes a full page (4,096 bytes) of data
+>> to be copied from user space into the kernel.  What is the least
+>> and the greatest possible number of inspections of the page table
+>> (e.g. calls to pagedir_get_page()) that might result?  What about
+>> for a system call that only copies 2 bytes of data?  Is there room
+>> for improvement in these numbers, and how much?
+
+- If all of the data to be copied is in one page then we need one inspection of the page
+table. If the data isn't in one page then two inspections are needed.
+- For system call if both bytes are in the same page then only one inspection is needed else
+two.
+- It cannnot be improved.
+
+>> B5: Briefly describe your implementation of the "wait" system call
+>> and how it interacts with process termination.
+
+- The wait system call first calls process_wait(). In process_wait() we check
+if the child has exited else we wait until it exits. We wait by using a semaphore.
+
+>> B6: Any access to user program memory at a user-specified address
+>> can fail due to a bad pointer value.  Such accesses must cause the
+>> process to be terminated.  System calls are fraught with such
+>> accesses, e.g. a "write" system call requires reading the system
+>> call number from the user stack, then each of the call's three
+>> arguments, then an arbitrary amount of user memory, and any of
+>> these can fail at any point.  This poses a design and
+>> error-handling problem: how do you best avoid obscuring the primary
+>> function of code in a morass of error-handling?  Furthermore, when
+>> an error is detected, how do you ensure that all temporarily
+>> allocated resources (locks, buffers, etc.) are freed?  In a few
+>> paragraphs, describe the strategy or strategies you adopted for
+>> managing these issues.  Give an example.
+
+- Whenever the address_check fails we call the exit system call which calls thread_exit
+which then calls process_exit.
+- In process exit we free the children_list and change the allow access of the executable file of
+the process and close all of the open files of this process.
+- In exception.c we are exiting the process in page_fault() if the address is invalid.
+
+---- SYNCHRONIZATION ----
+
+>> B7: The "exec" system call returns -1 if loading the new executable
+>> fails, so it cannot return before the new executable has completed
+>> loading.  How does your code ensure this?  How is the load
+>> success/failure status passed back to the thread that calls "exec"?
+
+- If load is sucessful then parent will wait until child process completes loading
+through sema_load and if it fails to load then we have boolean variable which will show whether the child failed the load
+or not.
+
+>> B8: Consider parent process P with child process C.  How do you
+>> ensure proper synchronization and avoid race conditions when P
+>> calls wait(C) before C exits?  After C exits?  How do you ensure
+>> that all resources are freed in each case?  How about when P
+>> terminates without waiting, before C exits?  After C exits?  Are
+>> there any special cases?
+
+- When wait(C) is called we check if it has exited else we wait for it to exit by using a 
+semaphore. We call sema_down() to wait and then when C exits, we call sema_up() to wake up the parent
+thread. Whenever a process exits we free its children. 
+- If P terminates then its children list is freed and the child C executes as if it has no parent
+regradless of whether C has exited or not.
+
+---- RATIONALE ----
+
+>> B9: Why did you choose to implement access to user memory from the
+>> kernel in the way that you did?
+
+We validated the address in syscall.c as we felt it was easier to do than the second
+approach.
+
+>> B10: What advantages or disadvantages can you see to your design
+>> for file descriptors?
+
+- Advantages:
+  - We used Pintos list to handle file descriptors which provides easy editing to the list.
+  - Kernel knows all of the open files through file descriptor list.
+
+- Disadvantages:
+  - It uses the Kernel memory so when the list grows it can take up the memory and eventually crash
+  if many files are opened.
+  - search_fd runs in linear time as it traverses the whole file descriptor list.
+
+
+>> B11: The default tid_t to pid_t mapping is the identity mapping.
+>> If you changed it, what advantages are there to your approach?
+
+- We did not change the deafulr tid_t mapping.

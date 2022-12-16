@@ -1,0 +1,202 @@
+          +-------------------------------------+
+          |                CS 301               |
+          | PROJECT 3: VIRTUAL MEMORY - PAGING  |
+          |            DESIGN DOCUMENT          |
+          +-------------------------------------+
+
+---- GROUP ----
+
+>> Fill in the names and email addresses of your group members.
+
+Haikoo Khandor <haikoo.ashok@iitgn.ac.in>
+Madhav Kanda <madhav.kanda@iitgn.ac.in>
+Mihir Sutariya <sutariya.mihirkumar@iitgn.ac.in>
+
+---- PRELIMINARIES ----
+
+>> If you have any preliminary comments on your submission, notes for the
+>> TAs, or extra credit, please give them here.
+
+>> Please cite any offline or online sources you consulted while
+>> preparing your submission, other than the Pintos documentation, course
+>> text, lecture notes, and course staff.
+
+1. https://github.com/codyjack/OS-pintos
+2. https://github.com/wookayin/pintos
+
+
+          PAGE TABLE MANAGEMENT
+          =====================
+
+---- DATA STRUCTURES ----
+
+>> A1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+- Added new variables in `struct thread` in thread.h 
+  struct hash sp;  # Using Hash data structure
+  
+- frame.h  # struct to access the frame table entry parameters and also added lock
+  struct lock ft_mutex;
+  struct list ft;
+  struct ft_entry {
+      struct list_elem elem;
+      void *frame;
+      struct sp_entry *spe;
+      struct thread *thread;
+  };
+  
+- page.h   # struct to access the parameters of supplement page table entry
+  struct sp_entry{
+    enum spe_type type;
+    bool can_write;
+    bool loaded;
+    void* uv_add;
+    bool pinned;
+
+    struct file* file;
+    size_t offset;
+    size_t zero_bytes;
+    size_t swap_index;
+    struct hash_elem elem;
+    size_t read_bytes;
+  };
+
+
+---- ALGORITHMS ----
+
+>> A2: In a few paragraphs, describe your code for accessing the data
+>> stored in the SPT about a given page.
+
+>> A3: How does your code coordinate accessed and dirty bits between
+>> kernel and user virtual addresses that alias a single frame, or
+>> alternatively how do you avoid the issue?
+
+Since the user virtual address is verified in page_fault and address_check
+before being loaded following validation using the supplemental page table,
+the kernel never uses kernel virtual addresses.
+
+---- SYNCHRONIZATION ----
+
+>> A4: When two user processes both need a new frame at the same time,
+>> how are races avoided?
+
+It is necessary to have access to the ft_mutex lock in order to allocate
+and remove frames. As a result, two users cannot allocate or remove a frame
+at the same time, preventing race circumstances.
+
+
+---- RATIONALE ----
+
+>> A5: Why did you choose the data structure(s) that you did for
+>> representing virtual-to-physical mappings?
+
+In ft_entry
+- loaded: To determine whether the user page has already loaded
+- spe: It is used to know whether a frame has been evicted or
+ is it still being allocated
+In sp_entry
+- uv_add: It is included so that the kernel will only use user virtual addresses.
+
+Since we were not able to come up with anyother approach hence we implemented this approach.
+
+
+          PAGING TO AND FROM DISK
+          =======================
+
+---- DATA STRUCTURES ----
+
+>> B1: Copy here the declaration of each new or changed `struct' or
+>> `struct' member, global or static variable, `typedef', or
+>> enumeration.  Identify the purpose of each in 25 words or less.
+
+Introduced swapping by using lock and bitmap data structure 
+struct lock swap_mutex;
+struct block *swap_block;
+struct bitmap *swap_bmap;
+
+---- ALGORITHMS ----
+
+>> B2: When a frame is required but none is free, some frame must be
+>> evicted.  Describe your code for choosing a frame to evict.
+
+Going through the frame list iteratively, we swap the access bit if it
+was true. If not, the page will be swapped out and, depending on whether
+it is a stack page, it will either be swapped out or written to a file.
+Free sectors are searched, written to, and set as the swap index while
+swapping out. The memory will now be freed and the user virtual address
+will be invalidated. At last, palloc_get_page() is called.
+
+>> B3: When a process P obtains a frame that was previously used by a
+>> process Q, how do you adjust the page table (and any other data
+>> structures) to reflect the frame Q no longer has?
+
+Following the eviction, the previous frame is lost and the new frame is
+released. And a new frame with an updated spe and thread is created.
+This approach might be unfair.
+
+---- SYNCHRONIZATION ----
+
+>> B5: Explain the basics of your VM synchronization design.  In
+>> particular, explain how it prevents deadlock.  (Refer to the
+>> textbook for an explanation of the necessary conditions for
+>> deadlock.)
+
+When a supplemental page table entry's user virtual address is accessed
+through a page fault or syscall, the pinned flag of the item is set to true.
+The frame eviction algorithm ignores true pinned flag entries.
+Consequently, they won't be evicted. When the kernel no longer accesses the user data, the flag is once more set to False.
+
+>> B6: A page fault in process P can cause another process Q's frame
+>> to be evicted.  How do you ensure that Q cannot access or modify
+>> the page during the eviction process?  How do you avoid a race
+>> between P evicting Q's frame and Q faulting the page back in?
+
+Process Q sets the spe's pinned flag of the memory it is accessinng to true
+in page_fault and syscalls. So when P iterates through the frame table, 
+Q's frame will not be taken into account until Q exits the page_fault or syscall.
+ 
+When P tries to evict the frame, it changes the loaded flag's value to false, 
+so Q must reload the page when trying to fault the page back in. To prevent race
+circumstances like evicting a frame while the kernel is accessing it, page faults
+are employed.
+
+
+
+>> B7: Suppose a page fault in process P causes a page to be read from
+>> the file system or swap.  How do you ensure that a second process Q
+>> cannot interfere by e.g. attempting to evict the frame while it is
+>> still being read in?
+
+When Process P is loading the page, its spe will be pinned. Thus, because
+the frame is pinned, Q is unable to remove it while iterating. If process
+P pins and loads the frame after process Q begins to evict it, Q will
+evict the frame and P will page fault.
+
+
+>> B8: Explain how you handle access to paged-out pages that occur
+>> during system calls.  Do you use page faults to bring in pages (as
+>> in user programs), or do you have a mechanism for "locking" frames
+>> into physical memory, or do you use some other design?  How do you
+>> gracefully handle attempted accesses to invalid virtual addresses?
+
+The pages that has not loaded are loaded manually during the system call
+and gets pinned.This will prevent its eviction but it can still cause
+eviction. So, the page_fault also allows kernel to fault in the user pages.
+User process will be exited with -1 in case of invalid virtual address.
+
+
+---- RATIONALE ----
+
+>> B9: A single lock for the whole VM system would make
+>> synchronization easy, but limit parallelism.  On the other hand,
+>> using many locks complicates synchronization and raises the
+>> possibility for deadlock but allows for high parallelism.  Explain
+>> where your design falls along this continuum and why you chose to
+>> design it this way.
+
+We utilised a boolean with race condition detection through the usage of
+page faults in order to utilise parallelism while preventing deadlock.
+There are circumstances, however, in which our design will fall short,
+but we discovered it to be a compromise between parallelism and deadlocks.
